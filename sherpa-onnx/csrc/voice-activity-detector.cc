@@ -21,6 +21,7 @@
 
 #include "sherpa-onnx/csrc/circular-buffer.h"
 #include "sherpa-onnx/csrc/macros.h"
+#include "sherpa-onnx/csrc/smart-turn-detector.h"
 #include "sherpa-onnx/csrc/vad-model.h"
 
 namespace sherpa_onnx {
@@ -64,6 +65,10 @@ class VoiceActivityDetector::Impl {
       }
     }
 
+    if (smart_turn_) {
+      model_->SetMinSilenceDuration(config_.smart_turn.min_silence_duration);
+    }
+
     int32_t window_size = model_->WindowSize();
     int32_t window_shift = model_->WindowShift();
 
@@ -92,6 +97,7 @@ class VoiceActivityDetector::Impl {
         p, static_cast<const float *>(last_.data()) + last_.size());
 
     if (is_speech) {
+      pending_silence_start_ = -1;
       if (start_ == -1) {
         // beginning of speech
         start_ = std::max(buffer_.Tail() - 2 * model_->WindowSize() -
@@ -106,12 +112,30 @@ class VoiceActivityDetector::Impl {
     } else {
       // non-speech
 
-      cur_segment_.start = -1;
-      cur_segment_.samples.clear();
+      if (!smart_turn_) {
+        cur_segment_.start = -1;
+        cur_segment_.samples.clear();
+      }
 
       if (start_ != -1 && buffer_.Size()) {
         // end of speech, save the speech segment
         int64_t end = buffer_.Tail() - model_->MinSilenceDurationSamples();
+        if (smart_turn_) {
+          if (pending_silence_start_ == -1) {
+            pending_silence_start_ = end;
+          } else {
+            end = pending_silence_start_;
+          }
+
+          int32_t silence_samples = buffer_.Tail() - pending_silence_start_;
+          std::vector<float> audio = buffer_.Get(start_, buffer_.Tail() - start_);
+          if (!smart_turn_->IsEndOfTurn(audio.data(), audio.size()) &&
+              silence_samples < smart_turn_max_silence_samples_) {
+            cur_segment_.start = start_;
+            cur_segment_.samples = std::move(audio);
+            return;
+          }
+        }
 
         // end - start_ is bounded by the buffer size, so it fits in int32_t.
         std::vector<float> s =
@@ -167,6 +191,7 @@ class VoiceActivityDetector::Impl {
     last_.clear();
 
     start_ = -1;
+    pending_silence_start_ = -1;
 
     cur_segment_.start = -1;
     cur_segment_.samples.clear();
@@ -195,6 +220,7 @@ class VoiceActivityDetector::Impl {
 
     buffer_.Pop(static_cast<int32_t>(end - buffer_.Head()));
     start_ = -1;
+    pending_silence_start_ = -1;
 
     cur_segment_.start = -1;
     cur_segment_.samples.clear();
@@ -208,6 +234,13 @@ class VoiceActivityDetector::Impl {
 
  private:
   void Init() {
+    if (!config_.smart_turn.model.empty()) {
+      smart_turn_ = std::make_unique<SmartTurnDetector>(
+          config_.smart_turn, config_.sample_rate, config_.num_threads,
+          config_.provider, config_.debug);
+      smart_turn_max_silence_samples_ = static_cast<int32_t>(
+          config_.sample_rate * config_.smart_turn.max_silence_duration);
+    }
     if (!config_.silero_vad.model.empty()) {
       max_utterance_length_ =
           config_.sample_rate * config_.silero_vad.max_speech_duration;
@@ -235,7 +268,11 @@ class VoiceActivityDetector::Impl {
   float new_min_silence_duration_s_ = 0.1;
   float new_threshold_ = 0.90;
 
+
   int64_t start_ = -1;
+  int64_t pending_silence_start_ = -1;
+  int32_t smart_turn_max_silence_samples_ = 0;
+  std::unique_ptr<SmartTurnDetector> smart_turn_;
 };
 
 VoiceActivityDetector::VoiceActivityDetector(
