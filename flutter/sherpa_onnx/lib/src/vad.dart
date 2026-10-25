@@ -1,6 +1,7 @@
 // Copyright (c)  2024  Xiaomi Corporation
 import 'dart:ffi';
 import 'dart:typed_data';
+
 import 'package:ffi/ffi.dart';
 
 import './sherpa_onnx_bindings.dart';
@@ -28,7 +29,8 @@ class CircularBuffer {
 
     if (p == nullptr) {
       throw Exception(
-          "Failed to create circular buffer. Please check your config");
+        "Failed to create circular buffer. Please check your config",
+      );
     }
 
     return CircularBuffer._(ptr: p);
@@ -80,7 +82,7 @@ class CircularBuffer {
 
     final Pointer<Float> p =
         SherpaOnnxBindings.circularBufferGet?.call(ptr, startIndex, n) ??
-            nullptr;
+        nullptr;
 
     if (p == nullptr) {
       return Float32List(0);
@@ -151,8 +153,10 @@ class VoiceActivityDetector {
 
   VoiceActivityDetector._({required this.ptr, required this.config});
 
-  factory VoiceActivityDetector(
-      {required VadModelConfig config, required double bufferSizeInSeconds}) {
+  factory VoiceActivityDetector({
+    required VadModelConfig config,
+    required double bufferSizeInSeconds,
+  }) {
     if (SherpaOnnxBindings.createVoiceActivityDetector == null) {
       throw Exception("Please initialize sherpa-onnx first");
     }
@@ -177,6 +181,16 @@ class VoiceActivityDetector {
     c.ref.tenVad.windowSize = config.tenVad.windowSize;
     c.ref.tenVad.maxSpeechDuration = config.tenVad.maxSpeechDuration;
 
+    final smartTurnModelPtr = config.smartTurnConfig.model.toNativeUtf8();
+    c.ref.smartTurn.model = smartTurnModelPtr;
+    c.ref.smartTurn.threshold = config.smartTurnConfig.threshold;
+    c.ref.smartTurn.sampleRate = config.smartTurnConfig.sampleRate;
+    c.ref.smartTurn.windowSize = config.smartTurnConfig.windowSize;
+    c.ref.smartTurn.minSilenceDuration =
+        config.smartTurnConfig.minSilenceDuration;
+    c.ref.smartTurn.maxSilenceDuration =
+        config.smartTurnConfig.maxSilenceDuration;
+
     c.ref.sampleRate = config.sampleRate;
     c.ref.numThreads = config.numThreads;
 
@@ -185,13 +199,17 @@ class VoiceActivityDetector {
 
     c.ref.debug = config.debug ? 1 : 0;
 
-    final ptr = SherpaOnnxBindings.createVoiceActivityDetector
-            ?.call(c, bufferSizeInSeconds) ??
+    final ptr =
+        SherpaOnnxBindings.createVoiceActivityDetector?.call(
+          c,
+          bufferSizeInSeconds,
+        ) ??
         nullptr;
 
     calloc.free(providerPtr);
     calloc.free(tenVadModelPtr);
     calloc.free(sileroVadModelPtr);
+    calloc.free(smartTurnModelPtr);
     calloc.free(c);
 
     if (ptr == nullptr) {
