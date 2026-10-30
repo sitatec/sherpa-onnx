@@ -13,7 +13,6 @@
 #include "sherpa-onnx/csrc/macros.h"
 #include "sherpa-onnx/csrc/onnx-utils.h"
 #include "sherpa-onnx/csrc/text-utils.h"
-#include "sherpa-onnx/csrc/ort-env.h"
 #include "sherpa-onnx/csrc/resample.h"
 #include "sherpa-onnx/csrc/session.h"
 
@@ -25,7 +24,7 @@ class SmartTurnDetector::Impl {
        const std::string &provider, bool debug)
       : config_(config),
         sample_rate_(sample_rate),
-        env_(CreateOrtEnv()) {
+        env_(ORT_LOGGING_LEVEL_ERROR) {
     auto sess_opts = GetSessionOptions(VadModelConfig({}, {}, sample_rate, num_threads, provider, debug));
     sess_ = std::make_unique<Ort::Session>(env_, SHERPA_ONNX_TO_ORT_PATH(config_.model), sess_opts);
     GetInputNames(sess_.get(), &input_names_, &input_names_ptr_);
